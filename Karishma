@@ -1,0 +1,168 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define OLED_ADDRESS 0x3C
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// MATCHED TO DIAGRAM: Sensors connected to D0 and D1
+#define SENSOR1 0 
+#define SENSOR2 1
+#define TAP_MAX_TIME 400
+#define RUB_MIN_TIME 700
+#define IDLE_TIMEOUT 3000      
+#define IDLE_SWITCH_TIME 2000  
+
+enum Face { FACE_HAPPY, FACE_SATISFIED, FACE_FRUSTRATED, FACE_MISCHIEVOUS, FACE_ANGRY, FACE_YAWNING, FACE_SLEEPING };
+Face currentFace = FACE_HAPPY;
+
+unsigned long touch1Start = 0, touch2Start = 0;
+unsigned long lastTouchTime = 0;
+unsigned long lastIdleSwitch = 0;
+bool isIdleYawning = true;
+bool inIdleMode = false; 
+
+bool prev1 = false, prev2 = false;
+
+void setFace(Face f) {
+  if (f == currentFace) return;
+  currentFace = f;
+  display.clearDisplay();
+  
+  switch(f) {
+    case FACE_SATISFIED: 
+      display.fillCircle(42, 25, 4, SSD1306_WHITE);
+      display.fillCircle(86, 25, 4, SSD1306_WHITE);
+      display.drawLine(48, 42, 55, 46, SSD1306_WHITE);
+      display.drawLine(55, 46, 64, 47, SSD1306_WHITE);
+      display.drawLine(64, 47, 73, 46, SSD1306_WHITE);
+      display.drawLine(73, 46, 80, 42, SSD1306_WHITE);
+      break;
+
+    case FACE_FRUSTRATED: 
+      display.drawLine(36, 22, 48, 28, SSD1306_WHITE);
+      display.drawLine(80, 28, 92, 22, SSD1306_WHITE);
+      display.drawLine(48, 45, 56, 40, SSD1306_WHITE);
+      display.drawLine(56, 40, 64, 45, SSD1306_WHITE);
+      display.drawLine(64, 45, 72, 40, SSD1306_WHITE);
+      display.drawLine(72, 40, 80, 45, SSD1306_WHITE);
+      break;
+
+    case FACE_MISCHIEVOUS: 
+      display.fillCircle(42, 26, 4, SSD1306_WHITE);
+      display.fillCircle(86, 26, 4, SSD1306_WHITE);
+      display.drawLine(45, 42, 55, 46, SSD1306_WHITE);
+      display.drawLine(55, 46, 70, 43, SSD1306_WHITE);
+      display.drawLine(70, 43, 82, 38, SSD1306_WHITE);
+      break;
+
+    case FACE_ANGRY: 
+      display.drawLine(34, 18, 50, 24, SSD1306_WHITE);
+      display.drawLine(78, 24, 94, 18, SSD1306_WHITE);
+      display.fillCircle(43, 29, 4, SSD1306_WHITE);
+      display.fillCircle(85, 29, 4, SSD1306_WHITE);
+      display.drawLine(48, 46, 56, 41, SSD1306_WHITE);
+      display.drawLine(56, 41, 64, 46, SSD1306_WHITE);
+      display.drawLine(64, 46, 72, 41, SSD1306_WHITE);
+      display.drawLine(72, 41, 80, 46, SSD1306_WHITE);
+      break;
+
+    case FACE_YAWNING:
+      display.drawLine(32, 26, 52, 28, SSD1306_WHITE);
+      display.drawLine(76, 28, 96, 26, SSD1306_WHITE);
+      display.fillCircle(42, 28, 2, SSD1306_WHITE);
+      display.fillCircle(86, 28, 2, SSD1306_WHITE);
+      display.drawCircle(64, 48, 10, SSD1306_WHITE);
+      display.fillCircle(64, 48, 6, SSD1306_WHITE);
+      break;
+
+    case FACE_SLEEPING:
+      display.drawLine(34, 28, 50, 30, SSD1306_WHITE);
+      display.drawLine(78, 30, 94, 28, SSD1306_WHITE);
+      display.drawLine(58, 46, 70, 46, SSD1306_WHITE);
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(95, 5); display.print("z");
+      display.setCursor(102, 0); display.print("Z");
+      break;
+
+    case FACE_HAPPY: 
+    default:
+      display.drawCircle(42, 27, 7, SSD1306_WHITE);
+      display.drawCircle(86, 27, 7, SSD1306_WHITE);
+      display.drawCircle(64, 39, 16, SSD1306_WHITE);
+      display.fillRect(42, 20, 44, 15, SSD1306_BLACK); 
+      display.drawLine(50, 42, 78, 42, SSD1306_WHITE);
+      break;
+  }
+  display.display();
+}
+
+void setup() {
+  pinMode(SENSOR1, INPUT);
+  pinMode(SENSOR2, INPUT);
+  Wire.begin();
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) while(true);
+  setFace(FACE_HAPPY);
+  lastTouchTime = millis();
+}
+
+void loop() {
+  bool s1 = digitalRead(SENSOR1);
+  bool s2 = digitalRead(SENSOR2);
+  unsigned long now = millis();
+
+  if (s1 || s2) {
+    lastTouchTime = now;
+    inIdleMode = false; 
+  }
+
+  if (s1 && !prev1) touch1Start = now;
+  if (s2 && !prev2) touch2Start = now;
+
+  // --- Active touches ---
+  if (s1 && s2) {
+    if (now - touch1Start >= RUB_MIN_TIME && now - touch2Start >= RUB_MIN_TIME) {
+      setFace(FACE_HAPPY);
+    }
+  } else if (s1) {
+    if (now - touch1Start >= RUB_MIN_TIME) setFace(FACE_SATISFIED);
+  } else if (s2) {
+    if (now - touch2Start >= RUB_MIN_TIME) setFace(FACE_FRUSTRATED);
+  }
+
+  if (!s1 && prev1) {
+    if (now - touch1Start <= TAP_MAX_TIME) setFace(FACE_MISCHIEVOUS);
+    touch1Start = 0;
+  }
+  if (!s2 && prev2) {
+    if (now - touch2Start <= TAP_MAX_TIME) setFace(FACE_ANGRY);
+    touch2Start = 0;
+  }
+
+  // --- IDLE LOGIC ---
+  if (!s1 && !s2) {
+    if (now - lastTouchTime > IDLE_TIMEOUT) {
+      if (!inIdleMode) {
+        inIdleMode = true;
+        isIdleYawning = true;
+        lastIdleSwitch = now;
+        setFace(FACE_YAWNING);
+      } else if (now - lastIdleSwitch > IDLE_SWITCH_TIME) {
+        isIdleYawning = !isIdleYawning;
+        lastIdleSwitch = now;
+        if (isIdleYawning) setFace(FACE_YAWNING);
+        else setFace(FACE_SLEEPING);
+      }
+    }
+  } else {
+    lastIdleSwitch = now;
+  }
+
+  prev1 = s1;
+  prev2 = s2;
+  delay(20);
+}
